@@ -114,36 +114,59 @@ Without cielara, grep finds files that *import* the target but can't tell you wh
 
 ## Verify the hook is firing
 
-Set the debug log env var before starting the session:
+The most reliable single-command proof — run this from **inside your enabled repo**:
 
 ```bash
+rm -f /tmp/cielara-hook.log
+CIELARA_HOOK_DEBUG_LOG=/tmp/cielara-hook.log claude --dangerously-skip-permissions -p \
+  'Use the Grep tool to search for any common symbol like "def" in any one file. Output only "ok".'
+cat /tmp/cielara-hook.log
+```
+
+Passing the env inline (`VAR=val command...`) guarantees the subprocess inherits it. Using `-p` mode means `claude` exits once the turn is done, so the `cat` at the end reliably sees the log. Expected output is one JSON line:
+
+```json
+{"ts":"...","agent":"claude","sessionId":"...","toolName":"Grep","cwd":"...","hookInvoked":true,"kgApplied":true,"additionalContextLen":514,"testMarkerInjected":false}
+```
+
+If you prefer tailing a long interactive session:
+
+```bash
+# Terminal 1 — create the file first so tail -F has something to watch,
+# then export and start claude/codex in the SAME shell:
+touch /tmp/cielara-hook.log
 export CIELARA_HOOK_DEBUG_LOG=/tmp/cielara-hook.log
-claude           # or codex — the hook fires for both
-# ... do a grep / rg in the session ...
+claude           # or codex
+
+# Terminal 2:
+tail -F /tmp/cielara-hook.log     # -F (capital) follows the filename even if recreated
 ```
 
-In another terminal:
-```bash
-tail -f /tmp/cielara-hook.log
-```
+(Use `-F`, not `-f` — on macOS BSD `tail`, `-f` errors if the file doesn't exist yet.)
 
-Each line is a JSON record per hook invocation. The `agent` field tells you whether it was Claude or Codex:
+Each log line is a JSON record per hook invocation. The `agent` field tells you whether it was Claude or Codex:
 ```json
 {"ts":"...","agent":"claude","sessionId":"abc123","toolName":"Grep","cwd":"...","hookInvoked":true,"kgApplied":true,"additionalContextLen":514,"testMarkerInjected":false}
 {"ts":"...","agent":"codex","sessionId":"xyz789","toolName":"Bash","cwd":"...","hookInvoked":true,"kgApplied":true,"additionalContextLen":396,"testMarkerInjected":false}
 ```
 
-For end-to-end marker proof (shows the model actually received the output):
+### End-to-end marker proof (shows the model actually received the output)
+
 ```bash
 export CIELARA_HOOK_TEST_MARKER="CIELARA-PING-$(uuidgen | head -c 8)"
 echo "Will look for: $CIELARA_HOOK_TEST_MARKER"
-claude -p "Grep for 'DataFrame' in pandas/core/frame.py. Then output 'ok'."
+claude --dangerously-skip-permissions -p \
+  "Grep for 'DataFrame' in pandas/core/frame.py. Then output 'ok'."
+grep -l "$CIELARA_HOOK_TEST_MARKER" ~/.claude/projects/*/*.jsonl | head -3
 ```
-Then:
-```bash
-grep "$CIELARA_HOOK_TEST_MARKER" ~/.claude/projects/**/*.jsonl
-```
-A match confirms Claude received the cielara output.
+A match confirms Claude actually received the cielara output.
+
+### If the log file never appears
+
+1. **Are you inside an enabled repo?** Check `cat .claude/settings.json` — it should list a `PostToolUse` hook matching `Grep` that calls `cielara-code claude-hook`. If it's missing, re-run `cielara-code enable --claude-scope=project` from that repo.
+2. **Is `/status` inside the claude session showing your repo's settings.json?** If not, you started `claude` from a directory outside the repo — `cd` into the repo first.
+3. **Did you start `claude` BEFORE exporting the env var?** Claude's subprocesses inherit from the shell where claude started. Re-run after exporting.
+4. **Did your grep actually happen?** The hook only fires when a Grep tool call completes. If the model chose to use Read/Bash instead, no hook runs. Explicitly instruct "use the Grep tool" in your prompt.
 
 ## Subcommands
 
