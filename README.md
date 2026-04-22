@@ -1,6 +1,10 @@
 # cielara-code
 
-Graph-enhanced code retrieval CLI for [Claude Code](https://www.claude.com/claude-code). After every Grep tool call, `cielara-code` augments the output with a `[Related files from dependency graph]` block — symbol-level callers, callees, flow positions, cluster labels — so the model gets richer structural context for free.
+Graph-enhanced code retrieval CLI for [Claude Code](https://www.claude.com/claude-code) and [Codex CLI](https://developers.openai.com/codex/). After every grep-like tool call, `cielara-code` augments the output with a `[Related files from dependency graph]` block — symbol-level callers, callees, flow positions, cluster labels — so the model gets richer structural context for free.
+
+Works with both agents via their `PostToolUse` hook mechanism:
+- **Claude Code** — wired onto the `Grep` tool
+- **Codex CLI** — wired onto the `Bash` tool (matches `rg`/`grep`/`ripgrep` invocations)
 
 ## Install
 
@@ -20,18 +24,24 @@ npm install -g cielara-code
 
 ```bash
 cd /path/to/your/python/repo
-cielara-code enable --claude-scope=project
+cielara-code enable --claude-scope=project --codex-scope=project
 ```
 
 That command:
 1. Installs git hooks (`post-merge`, `post-checkout`, `post-rewrite`) so the index auto-refreshes on branch switches / merges
-2. Writes a Claude Code `PostToolUse` hook into `<repo>/.claude/settings.json`
+2. Writes the agent hooks into:
+   - `<repo>/.claude/settings.json` (Claude Code `PostToolUse` on `Grep`)
+   - `<repo>/.codex/hooks.json` (Codex `PostToolUse` on `Bash`) — also enables `codex_hooks = true` in `~/.codex/config.toml` if not already set
 3. Builds the initial knowledge-graph index at `<repo>/.git/cielara-code/kg.json`
 
-Now start a Claude Code session in this repo:
+Skip either agent's hook with `--claude-scope=none` or `--codex-scope=none`.
+
+Now start an agent session in this repo:
 
 ```bash
-claude
+claude           # Claude Code
+# or
+codex            # Codex CLI
 ```
 
 ### Tear down
@@ -50,19 +60,19 @@ Two repos that take ~2 minutes or less to index.
 ```bash
 git clone --depth 50 https://github.com/pandas-dev/pandas.git
 cd pandas
-cielara-code enable --claude-scope=project
+cielara-code enable --claude-scope=project --codex-scope=project
 # … builds ~33k-node index in ~2 min
 
-claude       # start a session inside pandas
+claude       # or `codex` — both see the enriched grep output
 ```
 
-**Prompt that shows the hook's value** (copy-paste into the Claude session):
+**Prompt that shows the hook's value** (copy-paste into your agent session):
 
 > For `pandas/core/reshape/merge.py`, return exactly this JSON:
 > `{"cluster_label":"...","flow_participation":[{"flow_name":"...","step":N,"total_steps":M}],"top_3_callees_with_confidence":[{"file":"...","symbol":"...","confidence":0.X}]}`.
 > Use Grep at most 2 times. For fields you genuinely cannot determine from Grep output alone, use `null` — do not guess. No prose.
 
-**With cielara enabled**, Claude returns:
+**With cielara enabled**, the agent returns:
 ```json
 {"cluster_label":"PandasCoreAlgorithms",
  "flow_participation":[{"flow_name":"corrwith","step":115,"total_steps":131}],
@@ -73,7 +83,7 @@ claude       # start a session inside pandas
  ]}
 ```
 
-**Without cielara** (run `cielara-code disable` first, then ask again), Claude correctly refuses those fields:
+**Without cielara** (run `cielara-code disable` first, then ask again), the agent correctly refuses those fields:
 ```json
 {"cluster_label":null,"flow_participation":null,"top_3_callees_with_confidence":[
    {"file":"pandas/core/sorting.py","symbol":null,"confidence":null},
@@ -88,8 +98,8 @@ because cluster labels, flow positions, and per-edge confidence scores don't exi
 ```bash
 git clone --depth 50 https://github.com/psf/requests.git
 cd requests
-cielara-code enable --claude-scope=project
-claude
+cielara-code enable --claude-scope=project --codex-scope=project
+claude           # or codex
 ```
 
 Try:
@@ -108,8 +118,8 @@ Set the debug log env var before starting the session:
 
 ```bash
 export CIELARA_HOOK_DEBUG_LOG=/tmp/cielara-hook.log
-claude
-# ... do a grep in the session ...
+claude           # or codex — the hook fires for both
+# ... do a grep / rg in the session ...
 ```
 
 In another terminal:
@@ -117,9 +127,10 @@ In another terminal:
 tail -f /tmp/cielara-hook.log
 ```
 
-Each line is a JSON record per hook invocation:
+Each line is a JSON record per hook invocation. The `agent` field tells you whether it was Claude or Codex:
 ```json
 {"ts":"...","agent":"claude","sessionId":"abc123","toolName":"Grep","cwd":"...","hookInvoked":true,"kgApplied":true,"additionalContextLen":514,"testMarkerInjected":false}
+{"ts":"...","agent":"codex","sessionId":"xyz789","toolName":"Bash","cwd":"...","hookInvoked":true,"kgApplied":true,"additionalContextLen":396,"testMarkerInjected":false}
 ```
 
 For end-to-end marker proof (shows the model actually received the output):
@@ -146,18 +157,24 @@ A match confirms Claude received the cielara output.
 | `cielara-code version` / `help` | Info |
 
 Flags on `enable`:
-- `--claude-scope=project|local|user|none` — where to install the Claude hook. Default `user` (global across every Claude session); `project` scopes to this repo only (teammates who clone and commit `.claude/settings.json` get it automatically).
-- `--codex-scope=project|user|none` — same for Codex CLI
+- `--claude-scope=project|local|user|none` — where to install the Claude Code hook.
+  - `user` (default) writes to `~/.claude/settings.json` — fires in every Claude session on your machine
+  - `project` writes to `<repo>/.claude/settings.json` — only fires in sessions started inside this repo; commit that file and teammates inherit it
+  - `local` writes to `<repo>/.claude/settings.local.json` — same scope as project but gitignored (personal to one dev)
+  - `none` skips the Claude hook entirely
+- `--codex-scope=project|user|none` — same for Codex CLI (`.codex/hooks.json`). Codex has no `local` variant.
 - `--no-build` — skip the initial index build
 
 ## What gets installed where (repo-level enable)
 
-After `cielara-code enable --claude-scope=project` in `/path/to/repo`:
+After `cielara-code enable --claude-scope=project --codex-scope=project` in `/path/to/repo`:
 
 ```
 /path/to/repo/
 ├── .claude/
-│   └── settings.json          # PostToolUse:Grep hook wired to cielara-code
+│   └── settings.json          # Claude Code PostToolUse:Grep hook
+├── .codex/
+│   └── hooks.json             # Codex CLI PostToolUse:Bash hook
 ├── .git/
 │   ├── hooks/
 │   │   ├── post-merge         # refresh index on pulls/merges
@@ -170,7 +187,9 @@ After `cielara-code enable --claude-scope=project` in `/path/to/repo`:
 └── ... (your code, untouched)
 ```
 
-Everything cielara writes lives inside `.git/` — nothing pollutes your working tree. `cielara-code disable --purge` removes it all.
+(Skip either file by passing `--claude-scope=none` or `--codex-scope=none`.)
+
+Everything cielara writes lives inside `.git/` (plus the two agent-config dirs) — nothing pollutes your working tree. `cielara-code disable --purge` removes it all.
 
 ## Environment variables
 
@@ -179,7 +198,7 @@ Everything cielara writes lives inside `.git/` — nothing pollutes your working
 | `CIELARA_KG_TOPK` | 5 | Max related files per section in the appended block |
 | `CIELARA_KG_MIN_CONFIDENCE` | 0.0 | Filter edges below this confidence |
 | `CIELARA_HOOK_DEBUG_LOG` | unset | Write one JSONL record per agent-hook invocation |
-| `CIELARA_HOOK_TEST_MARKER` | unset | Inject this string into every `additionalContext` — grep for it in Claude's transcript |
+| `CIELARA_HOOK_TEST_MARKER` | unset | Inject this string into every `additionalContext` — grep for it in the agent's transcript |
 | `CIELARA_SIDECAR_BIN` | (auto) | Path to the `cielara-sidecar` binary (set by the npm shim) |
 
 ## Troubleshooting
@@ -190,8 +209,11 @@ Expected. Initial build on ~1500 Python files / 33k graph nodes ≈ 2 min. Subse
 **`npm install -g cielara-code` fails with "unsupported platform"**
 v0.2.x ships `darwin-arm64` only. Other platforms come in v0.3.x.
 
-**Hook not firing in a Claude session**
-Run `/status` inside the session. If `<repo>/.claude/settings.json` isn't listed under hooks, Claude Code's cwd isn't inside the repo (it walks up from cwd to find a git root + `.claude/` marker). For `--claude-scope=project`, you must start `claude` from inside the repo's tree.
+**Hook not firing in a Claude Code session**
+Run `/status` inside the session. If `<repo>/.claude/settings.json` isn't listed under hooks, Claude's cwd isn't inside the repo (it walks up from cwd to find a git root + `.claude/` marker). For `--claude-scope=project`, you must start `claude` from inside the repo's tree.
+
+**Hook not firing in a Codex CLI session**
+Codex requires the `codex_hooks` feature flag to be enabled. `cielara-code enable` auto-writes `codex_hooks = true` under `[features]` in `~/.codex/config.toml` if that section is missing. If the section already exists, you'll need to add the line manually (cielara prints a message instructing you). Also confirm Codex is reading `<repo>/.codex/hooks.json` — same cwd rule as Claude: start `codex` from inside the repo.
 
 **"no KG index found"** from `cielara-code query`
 Run `cielara-code build` (or `cielara-code enable`, which includes it).
