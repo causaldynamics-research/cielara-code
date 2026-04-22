@@ -34,19 +34,6 @@ Now start a Claude Code session in this repo:
 claude
 ```
 
-Every time the model runs a Grep, cielara appends a block like:
-
-```
-[Related files from dependency graph]
-  pandas/core/reshape/merge.py (cluster: PandasCoreAlgorithms):
-    Callees: MergeError @ pandas/errors/__init__.py [0.9],
-             take @ pandas/core/algorithms.py [0.9],
-             FrozenList.difference @ pandas/core/indexes/frozen.py [0.9]
-    Flow: corrwith (step 115/131), describe_numeric_1d (step 117/128)
-```
-
-The model sees this as additional context and can follow high-confidence callers/callees or stay within a cluster.
-
 ### Tear down
 
 ```bash
@@ -218,13 +205,3 @@ cielara-code disable --purge
 # Remove the npm package:
 npm uninstall -g cielara-code
 ```
-
-## Release info
-
-Current: **v0.2.3** (Apple Silicon macOS only).
-
-Release tarballs live under [Releases](https://github.com/causaldynamics-research/cielara-code/releases). Each `cli-v<version>` tag includes:
-- `cielara-code-<version>-darwin-arm64.tar.gz` — extracted binaries end up under `dist/` (TS binary + Python-sidecar binary + `PROVENANCE.json` + `LICENSE`)
-- `*.sha256` — integrity verification
-
-The npm package's `postinstall` fetches the right tarball automatically; you don't need to download manually unless you're doing offline setup.
