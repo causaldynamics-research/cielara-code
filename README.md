@@ -8,8 +8,6 @@ Graph-enhanced code retrieval CLI for [Claude Code](https://www.claude.com/claud
 npm install -g cielara-code
 ```
 
-Zero Python, zero `uv`, zero extra steps. The package ships two self-contained binaries (TS CLI + Python sidecar, both compiled).
-
 **Supported platforms:** macOS arm64 (Apple Silicon). Other platforms land with v0.3.x once multi-platform CI is wired up.
 
 ### Prereqs
