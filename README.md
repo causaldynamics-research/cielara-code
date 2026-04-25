@@ -168,7 +168,7 @@ done
 ```
 
 **The prompt**:
-```
+````
 You are a file localization agent. Given a GitHub issue, explore the repository and identify which source files would need to be modified to resolve it.
 
 Rules:
@@ -199,7 +199,7 @@ X.iloc[[1, 2, 3]]
 > ValueError buffer source array is read-only
 
 Is there a way to slice the rows of the dataframe in another way that doesn't need a writeable array?
-```
+````
 
 **Ground truth (2 files)**: `pandas/src/generate_code.py`, `pandas/tests/test_common.py`.
 
