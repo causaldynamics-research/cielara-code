@@ -237,89 +237,6 @@ Hits: 1/2 — `generate_code.py` makes it in. Still misses `tests/test_common.py
 
 **Δ = +0.050 (+5.0pp), effect ≈ 0.23σ.**
 
----
-
-### Verifying cielara fired during your run
-
-Set `CIELARA_HOOK_DEBUG_LOG=/tmp/cielara-hook.log` before starting `claude` in the `with_cielara` clone. After the session, every grep call should appear as a JSON line with `kgApplied: true` (or `false` when the grepped files have no KG entries — also valid). Empty log = hook never fired = something's misconfigured.
-
-## Verify the hook is firing
-
-The most reliable single-command proof — run this from **inside your enabled repo** (pandas example shown; substitute a path that exists in your repo):
-
-```bash
-rm -f /tmp/cielara-hook.log
-CIELARA_HOOK_DEBUG_LOG=/tmp/cielara-hook.log claude --dangerously-skip-permissions -p \
-  'Use the Grep tool with pattern "class" to search pandas/core/frame.py. Output only "ok".'
-cat /tmp/cielara-hook.log
-```
-
-Passing the env inline (`VAR=val command...`) guarantees the subprocess inherits it. Using `-p` mode means `claude` exits once the turn is done, so the `cat` at the end reliably sees the log. Pinning the grep to a real, indexed source file (not a vague "any file") makes the result deterministic — Claude would otherwise sometimes pick config files like `pyproject.toml` or `setup.py` that aren't in the graph.
-
-Expected output is one JSON line with `kgApplied: true`:
-```json
-{"ts":"...","agent":"claude","sessionId":"...","toolName":"Grep","cwd":"...","hookInvoked":true,"kgApplied":true,"additionalContextLen":844,"testMarkerInjected":false}
-```
-
-### What `hookInvoked` vs `kgApplied` mean
-
-| Field | Meaning |
-|---|---|
-| `hookInvoked: true` | Claude called the hook — the wiring is working |
-| `hookInvoked: false` | Hook wasn't called at all — settings.json not loaded, or claude wasn't in an enabled repo |
-| `kgApplied: true` | The file Claude grep'd is in the KG and has relationships worth showing |
-| `kgApplied: false` | The grep landed on a file NOT in the KG (e.g. `pyproject.toml`, `setup.py`, `*.md`) or with no visible callers/callees after filters. Not a bug — just means that particular grep had nothing to enrich. |
-
-If you see `hookInvoked: true, kgApplied: false`, the hook is firing fine — the next grep on an indexed file will show `kgApplied: true`.
-
-If you prefer tailing a long interactive session:
-
-```bash
-# Terminal 1 — create the file first so tail -F has something to watch,
-# then export and start claude/codex in the SAME shell:
-touch /tmp/cielara-hook.log
-export CIELARA_HOOK_DEBUG_LOG=/tmp/cielara-hook.log
-claude           # or codex
-
-# Terminal 2:
-tail -F /tmp/cielara-hook.log     # -F (capital) follows the filename even if recreated
-```
-
-(Use `-F`, not `-f` — on macOS BSD `tail`, `-f` errors if the file doesn't exist yet.)
-
-Each log line is a JSON record per hook invocation. The `agent` field tells you whether it was Claude or Codex:
-```json
-{"ts":"...","agent":"claude","sessionId":"abc123","toolName":"Grep","cwd":"...","hookInvoked":true,"kgApplied":true,"additionalContextLen":514,"testMarkerInjected":false}
-{"ts":"...","agent":"codex","sessionId":"xyz789","toolName":"Bash","cwd":"...","hookInvoked":true,"kgApplied":true,"additionalContextLen":396,"testMarkerInjected":false}
-```
-
-### End-to-end marker proof (shows the model actually received the output)
-
-```bash
-export CIELARA_HOOK_TEST_MARKER="CIELARA-PING-$(uuidgen | head -c 8)"
-echo "Will look for: $CIELARA_HOOK_TEST_MARKER"
-claude --dangerously-skip-permissions -p \
-  "Grep for 'DataFrame' in pandas/core/frame.py. Then output 'ok'."
-grep -l "$CIELARA_HOOK_TEST_MARKER" ~/.claude/projects/*/*.jsonl | head -3
-```
-A match confirms Claude actually received the cielara output.
-
-### If the log file never appears
-
-1. **Are you inside an enabled repo?** Check `cat .claude/settings.json` — it should list a `PostToolUse` hook matching `Grep` that calls `cielara-code claude-hook`. If it's missing, re-run `cielara-code enable --claude-scope=project` from that repo.
-2. **Is `/status` inside the claude session showing your repo's settings.json?** If not, you started `claude` from a directory outside the repo — `cd` into the repo first.
-3. **Did you start `claude` BEFORE exporting the env var?** Claude's subprocesses inherit from the shell where claude started. Re-run after exporting.
-4. **Did your grep actually happen?** The hook only fires when a Grep tool call completes. If the model chose to use Read/Bash instead, no hook runs. Explicitly instruct "use the Grep tool" in your prompt.
-
-### If the log appears but shows `kgApplied: false`
-
-The grep hit a file that isn't in the knowledge graph (e.g. `pyproject.toml`, `setup.py`, `README.md`, a test file filtered by the excludes). Use a prompt that pins a known Python source file: replace `pandas/core/frame.py` in the snippet above with a file that actually exists in your repo's `cielara-code query <that-file>` output.
-
-To list files the index has:
-```bash
-python3 -c "import json; print('\n'.join(sorted(json.load(open('.git/cielara-code/kg.json')).keys())[:20]))"
-```
-
 ## Subcommands
 
 | Command | What it does |
@@ -351,14 +268,10 @@ After `cielara-code enable --claude-scope=project --codex-scope=project` in `/pa
 ├── .codex/
 │   └── hooks.json             # Codex CLI PostToolUse:Bash hook
 ├── .git/
-│   ├── hooks/
-│   │   ├── post-merge         # refresh index on pulls/merges
-│   │   ├── post-checkout      # refresh on branch switches (skips single-file checkouts)
-│   │   └── post-rewrite       # refresh after rebase
-│   └── cielara-code/
-│       ├── kg.json            # knowledge-graph index (JSON, ~30-80 KB per repo)
-│       ├── kg.pkl             # intermediate NetworkX graph (pickle)
-│       └── meta.json          # build metadata
+│   └── hooks/
+│       ├── post-merge         # refresh index on pulls/merges
+│       ├── post-checkout      # refresh on branch switches (skips single-file checkouts)
+│       └── post-rewrite       # refresh after rebase
 └── ... (your code, untouched)
 ```
 
