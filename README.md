@@ -203,17 +203,29 @@ Is there a way to slice the rows of the dataframe in another way that doesn't ne
 
 **Ground truth (2 files)**: `pandas/src/generate_code.py`, `pandas/tests/test_common.py`.
 
-**Sample baseline output (no_cielara)** — typical wrong guess:
-```json
-{"files_to_modify": ["pandas/core/indexing.py", "pandas/core/internals.py", "pandas/tests/test_indexing.py"]}
-```
+**Sample baseline output (no_cielara)** — typical wrong guess. Claude's full final message:
+
+> Confirmed. The bug is at `pandas/core/indexing.py:1699` — `indices[mask] += n` fails when the indices array is read-only. The fix needs to ensure the array is writeable before in-place modification.
+>
+> The files that need modification:
+> 1. **`pandas/core/indexing.py`** — The `maybe_convert_indices()` function (line 1686-1703) needs to copy the array if it's read-only before the in-place `+=` operation.
+> 2. **`pandas/tests/test_indexing.py`** — Needs a test case for iloc on a read-only DataFrame.
+>
+> `{"files_to_modify": ["pandas/core/indexing.py", "pandas/tests/test_indexing.py"]}`
+
 Hits: 0/2 — model anchors on `iloc` and lands in `core/indexing.py`, never traces to the Cython generator.
 
-**Sample with-cielara output** — when KG surfaces `pandas/src/`:
-```json
-{"files_to_modify": ["pandas/core/common.py", "pandas/src/generate_code.py", "pandas/src/generated.pyx", "pandas/tests/test_indexing.py"]}
-```
-Hits: 1/2 — `generate_code.py` makes it in. Still misses `tests/test_common.py` (neither side ever picks it).
+**Sample with-cielara output** — when KG surfaces `pandas/src/`. Claude's full final message:
+
+> The files that need modification are:
+> 1. **`pandas/core/common.py`** — The `take_nd` function needs to handle read-only arrays (e.g., copy the array if it's not writable before passing to the Cython take functions that use typed memoryviews).
+> 2. **`pandas/src/generate_code.py`** — The `take_2d_axis0_template` and `take_2d_axis1_template` use typed memoryviews for `values` which require writable buffers. These templates need to be fixed (either use `ndarray` syntax like the other templates, or the fix can be in `common.py`).
+> 3. **`pandas/src/generated.pyx`** — The generated Cython file that needs to be regenerated from the templates after `generate_code.py` is fixed.
+> 4. **`pandas/tests/test_indexing.py`** — Tests for iloc; a test case for read-only dataframes should be added here.
+>
+> `{"files_to_modify": ["pandas/core/common.py", "pandas/src/generate_code.py", "pandas/src/generated.pyx", "pandas/tests/test_indexing.py"]}`
+
+Hits: 1/2 — `generate_code.py` makes it in (the KG surfaced `pandas/src/` files; the model traced the `take_nd` → Cython template chain). Still misses `tests/test_common.py` (neither side ever picks it).
 
 **N=10 results**:
 
